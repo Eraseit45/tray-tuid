@@ -1,7 +1,13 @@
+tests/
+docs/
 debug/
 target/
 *.log
 **/*.rs.bk
 *.pdb
 aur/
-
+flake.nix
+.scratch/modal-tui/PRD.md
+AGENTS.md
+CONTEXT.md
+src/.codegraph/.gitignore
