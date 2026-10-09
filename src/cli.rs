@@ -4,6 +4,12 @@ use clap_complete::Shell;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about=None)]
+#[command(
+    name = "tray-tuic",
+    version,
+    about = "Terminal client for tray-tuid",
+    long_about = None
+)]
 pub struct Cli {
     /// Unix socket path (default: $XDG_RUNTIME_DIR/tray-tui.sock)
     #[arg(long, value_name = "PATH")]

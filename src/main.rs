@@ -27,7 +27,7 @@ pub mod tui;
 pub mod ui;
 pub mod wrappers;
 
-static CMD: &str = "tray-tui";
+static CMD: &str = "tray-tuic";
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
