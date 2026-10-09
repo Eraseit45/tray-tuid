@@ -7,14 +7,16 @@ use crate::{
     event::{Event, EventHandler},
     handler::{handle_key_events, handle_mouse_event},
     tui::Tui,
-    wrappers::LoggableEvent,
 };
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use simplelog::{CombinedLogger, Config as Conf, LevelFilter, WriteLogger};
 
-use system_tray::{client::Client, item::StatusNotifierItem, menu::TrayMenu};
+use tray_tui::{
+    client::{Client, Receiver},
+    protocol::{default_socket_path, ServerMessage},
+};
 
 pub mod app;
 pub mod cli;
@@ -49,19 +51,13 @@ async fn main() -> AppResult<()> {
 
     let config = Config::new(&cli.config_path)?;
 
-    let client = Client::new().await.unwrap();
-    log::info!("Client is initialized");
-    let mut tray_rx = client.subscribe();
-
-    log::info!(
-        "status: {}, traymenu {}, client {}",
-        size_of::<StatusNotifierItem>(),
-        size_of::<TrayMenu>(),
-        size_of_val(&client)
-    );
+    let socket = cli.socket.map(Ok).unwrap_or_else(default_socket_path)?;
+    let (client, mut tray_rx, items) = Client::connect(&socket).await?;
+    log::info!("Connected to tray-tuid");
 
     // Create an application.
-    let mut app = App::new(client, config);
+    let mut app = App::new(client, items, config);
+    app.update();
     let map = app.config.key_map.clone();
 
     // Initialize the terminal user interface.
@@ -72,27 +68,44 @@ async fn main() -> AppResult<()> {
     tui.init()?;
     log::info!("Initialized TUI");
 
-    tui.draw(&mut app)?;
+    let result = run(&mut app, &mut tui, &mut tray_rx).await;
+    let exit = tui.exit();
+    result?;
+    exit?;
+    Ok(())
+}
 
+async fn run(
+    app: &mut App,
+    tui: &mut Tui<CrosstermBackend<io::Stdout>>,
+    tray_rx: &mut Receiver,
+) -> AppResult<()> {
     while app.running {
-        tui.draw(&mut app)?;
+        tui.draw(app)?;
         tokio::select! {
-            Ok(update) = tray_rx.recv() => {
-                log::debug!("{}", LoggableEvent(&update));
-                app.update();
-                if let system_tray::client::Event::Remove(_) = update {
-                    app.sync_focus();
+            message = tray_rx.receive::<ServerMessage>() => {
+                let message = message?;
+                log::debug!("Daemon message: {message:?}");
+                match message {
+                    ServerMessage::Upsert { key, item } => { app.items.insert(key, item); }
+                    ServerMessage::Remove { key } => { app.items.remove(&key); }
+                    ServerMessage::ActionResult { error, .. } => { app.last_error = error; }
+                    ServerMessage::Snapshot { .. } => {
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected repeated snapshot").into());
+                    }
                 }
+                app.update();
             }
 
-            Ok(event) = tui.events.next() => {
+            event = tui.events.next() => {
+                let event = event?;
                 log::debug!("Key event: {:?}", &event);
                 match event {
-                    Event::Key(key_event) => handle_key_events(key_event, &mut app).await?,
+                    Event::Key(key_event) => handle_key_events(key_event, app).await?,
                     Event::Mouse(mouse_event) => {
-                        handle_mouse_event(mouse_event, &mut app).await?
+                        handle_mouse_event(mouse_event, app).await?
                     },
-                    Event::Resize(_, _) => {tui.draw(&mut app).unwrap()}
+                    Event::Resize(_, _) => {tui.draw(app)?;}
                     Event::FocusLost => {
                         // doensn't work for some reason
                     }
@@ -102,6 +115,5 @@ async fn main() -> AppResult<()> {
     }
 
     log::info!("Exiting application");
-    tui.exit()?;
     Ok(())
 }

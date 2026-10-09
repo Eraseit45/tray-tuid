@@ -1,12 +1,12 @@
 use crate::CMD;
 use crokey::{key, KeyCombination};
 use crossterm::event::{KeyCode, KeyModifiers};
-use std::error::Error;
-use std::str::FromStr;
 use ratatui::style::Color;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
+use std::error::Error;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -70,7 +70,10 @@ where
                 KeyCombination::from_str(&k).map_err(serde::de::Error::custom)?
             };
             if config_map.contains_key(&kc) {
-                return Err(serde::de::Error::custom(format!("config: duplicate key binding detected for key: '{}'", k)))
+                return Err(serde::de::Error::custom(format!(
+                    "config: duplicate key binding detected for key: '{}'",
+                    k
+                )));
             }
 
             config_map.insert(kc, v);

@@ -2,21 +2,14 @@ use indexmap::IndexMap;
 use ratatui::layout::{Position, Rect};
 use std::{
     cell::{Ref, RefMut},
-    collections::HashMap,
     error,
-    sync::{Arc, Mutex, MutexGuard},
 };
-use system_tray::client::ActivateRequest;
-use system_tray::{
-    client::{Client, Event},
-    item::StatusNotifierItem,
-    menu::TrayMenu,
-};
+use tray_tui::{client::Client, protocol::TrayItems};
 use tui_tree_widget::TreeState;
 
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::Mutex;
 
-use crate::wrappers::{FindMenuByUsize, GetTitle, Id, SniState};
+use crate::wrappers::{FindMenuByUsize, Id, SniState};
 use crate::Config;
 
 pub type BoxStack = Vec<(i32, Rect)>;
@@ -24,21 +17,11 @@ pub type BoxStack = Vec<(i32, Rect)>;
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Layout {
     pub rows: Vec<Vec<usize>>,
     pub last_col: usize,
     pub scroll_offset: u16,
-}
-
-impl Layout {
-    pub fn new() -> Self {
-        Self {
-            rows: Vec::default(),
-            last_col: 0,
-            scroll_offset: 0,
-        }
-    }
 }
 
 /// Application.
@@ -47,35 +30,35 @@ pub struct App {
     pub running: bool,
     /// Config
     pub config: Config,
-    /// system-tray client
-    pub client: Client,
-    /// states saved for each [StatusNotifierItem] and their [TrayMenu]
+    /// Connection to the daemon
+    pub client: Mutex<Client>,
+    /// Interface states saved for each tray item
     pub sni_states: IndexMap<String, SniState>, // for the StatusNotifierItem
     //  currently focused sni item info
     pub focused_sni_index: usize,
     /// last focused index to detect focus changes for auto-scrolling
     pub last_focused_sni_index: usize,
     pub focused_sni_key: String,
-    /// items map from system-tray
-    pub items: Arc<Mutex<HashMap<String, (StatusNotifierItem, Option<TrayMenu>)>>>,
-    pub tray_rx: Mutex<Receiver<Event>>,
+    /// Local view of the daemon's tray state
+    pub items: TrayItems,
+    pub last_error: Option<String>,
     pub layout: Layout,
 }
 
 impl App {
     /// Constructs a new instance of [`App`].
-    pub fn new(client: Client, config: Config) -> Self {
+    pub fn new(client: Client, items: TrayItems, config: Config) -> Self {
         Self {
             running: true,
             config,
-            tray_rx: Mutex::new(client.subscribe()),
-            items: client.items(),
+            items,
+            last_error: None,
             sni_states: IndexMap::default(),
-            client,
+            client: Mutex::new(client),
             focused_sni_index: 0,
             last_focused_sni_index: 0,
             focused_sni_key: String::default(),
-            layout: Layout::new(),
+            layout: Layout::default(),
         }
     }
 
@@ -87,19 +70,15 @@ impl App {
         }
 
         // create a buffer for items keys and their titles(for sorting)
-        let mut buffer = IndexMap::new();
-        if let Some(items) = self.get_items() {
-            buffer = items
-                .iter()
-                .map(|(k, v)| (k.to_owned(), v.0.get_title().to_owned()))
-                .collect();
-        }
+        let buffer: IndexMap<_, _> = self
+            .items
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.title.to_owned()))
+            .collect();
 
         // Add sni states if there are in new items
         for (key, _) in &buffer {
-            self.sni_states
-                .entry(key.to_owned())
-                .or_insert_with(|| SniState::new());
+            self.sni_states.entry(key.to_owned()).or_default();
         }
 
         // Remove states that aren't in new items
@@ -116,7 +95,9 @@ impl App {
             self.focused_sni_index = index;
         } else if !self.sni_states.is_empty() {
             // Key is gone! Reset to a valid neighbor (next or previous)
-            self.focused_sni_index = self.focused_sni_index.min(self.sni_states.len().saturating_sub(1));
+            self.focused_sni_index = self
+                .focused_sni_index
+                .min(self.sni_states.len().saturating_sub(1));
             if let Some((k, _)) = self.sni_states.get_index(self.focused_sni_index) {
                 self.focused_sni_key = k.clone();
             }
@@ -139,13 +120,8 @@ impl App {
         self.running = false;
     }
 
-    pub fn get_items(
-        &self,
-    ) -> Option<MutexGuard<'_, HashMap<String, (StatusNotifierItem, Option<TrayMenu>)>>> {
-        match self.items.lock() {
-            Ok(items) => Some(items),
-            Err(_) => None,
-        }
+    pub fn get_items(&self) -> &TrayItems {
+        &self.items
     }
 
     pub fn get_focused_sni_key(&self) -> Option<&String> {
@@ -160,12 +136,12 @@ impl App {
 
     pub fn get_focused_sni_state(&self) -> Option<&SniState> {
         let (_, v) = self.sni_states.get_index(self.focused_sni_index)?;
-        return Some(v);
+        Some(v)
     }
 
     pub fn get_focused_sni_state_mut(&mut self) -> Option<&mut SniState> {
         let (_, v) = self.sni_states.get_index_mut(self.focused_sni_index)?;
-        return Some(v);
+        Some(v)
     }
 
     pub fn get_focused_sni_key_by_position(&mut self, pos: Position) -> Option<String> {
@@ -219,14 +195,22 @@ impl App {
 
             FocusDirection::Up => {
                 let target_row = if row == 0 { last_row_index } else { row - 1 };
-                let target_len = if target_row == last_row_index { last_row_len } else { cols };
+                let target_len = if target_row == last_row_index {
+                    last_row_len
+                } else {
+                    cols
+                };
                 let clamped_col = self.layout.last_col.min(target_len - 1);
                 target_row * cols + clamped_col
             }
 
             FocusDirection::Down => {
                 let target_row = if row == last_row_index { 0 } else { row + 1 };
-                let target_len = if target_row == last_row_index { last_row_len } else { cols };
+                let target_len = if target_row == last_row_index {
+                    last_row_len
+                } else {
+                    cols
+                };
                 let clamped_col = self.layout.last_col.min(target_len - 1);
                 target_row * cols + clamped_col
             }
@@ -234,9 +218,8 @@ impl App {
 
         match direction {
             FocusDirection::Up | FocusDirection::Down => self.layout.last_col = col,
-            _ => self.layout.last_col = new_index % cols
+            _ => self.layout.last_col = new_index % cols,
         }
-
 
         if let Some((key, _)) = self.sni_states.get_index(new_index) {
             let key = key.clone();
@@ -258,43 +241,30 @@ impl App {
         }
     }
 
-    pub async fn activate_menu_item(
-        &self,
-        ids: &[Id],
-        tree_state: &mut TreeState<Id>,
-    ) -> Option<()> {
+    pub async fn activate_menu_item(&self, ids: &[Id]) -> AppResult<()> {
         log::debug!("Entered activate_menu_item");
-        let sni_key = self.get_focused_sni_key()?;
+        let Some(sni_key) = self.get_focused_sni_key() else {
+            return Ok(());
+        };
         log::debug!("Activating menu item with key: {}", &sni_key);
-        let map = self.get_items()?;
-        let (sni, menu) = map.get(sni_key)?;
-        let menu = match menu {
-            Some(menu) => menu,
-            None => return None,
+        let Some(menu) = self.items.get(sni_key).and_then(|item| item.menu.as_ref()) else {
+            return Ok(());
+        };
+        let Some(item) = menu.find_menu_by_usize(ids) else {
+            return Ok(());
         };
 
-        let item = menu.find_menu_by_usize(ids)?;
-
         if item.submenu.is_empty() {
-            if let Some(path) = &sni.menu {
-                let activate_request = ActivateRequest::MenuItem {
-                    address: sni_key.to_string(),
-                    menu_path: path.to_string(),
-                    submenu_id: item.id,
-                };
-                let res = self.client.activate(activate_request).await;
-                log::debug!("Result of activating an item: {:?}", res);
-
-                let _ = self
-                    .client
-                    .about_to_show_menuitem(sni_key.to_string(), path.to_string(), 0)
-                    .await;
-            }
-        } else {
+            self.client
+                .lock()
+                .await
+                .activate(sni_key.to_string(), item.id)
+                .await?;
+        } else if let Some(mut tree_state) = self.get_focused_tree_state_mut() {
             tree_state.toggle(ids.to_vec());
         }
 
-        Some(())
+        Ok(())
     }
 }
 pub enum FocusDirection {

@@ -2,7 +2,8 @@ use std::iter::repeat_n;
 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState},
+    style::{Color, Style},
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame,
 };
 
@@ -11,14 +12,25 @@ use crate::wrappers::Item;
 
 /// Renders the user interface widgets.
 pub fn render(app: &mut App, frame: &mut Frame) {
-    let mut rectangles: Vec<Rect> = Vec::default();
+    let rectangles: Vec<Rect>;
+
+    let mut content_area = frame.area();
+    if let Some(error) = &app.last_error {
+        let [content, status] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(content_area);
+        frame.render_widget(
+            Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red)),
+            status,
+        );
+        content_area = content;
+    }
 
     let rows = app.layout.rows.len();
     if rows == 0 {
         return;
     }
     let min_height = app.config.min_height;
-    let mut area = frame.area();
+    let mut area = content_area;
 
     let total_min_height = rows as u16 * min_height;
 
@@ -53,7 +65,11 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             // Snap to row boundary when auto-scrolling down
             app.layout.scroll_offset = (app.layout.scroll_offset / min_height) * min_height;
             if app.layout.scroll_offset + viewport_height < row_bottom {
-                 app.layout.scroll_offset = app.layout.scroll_offset.saturating_add(min_height).min(max_scroll);
+                app.layout.scroll_offset = app
+                    .layout
+                    .scroll_offset
+                    .saturating_add(min_height)
+                    .min(max_scroll);
             }
         }
         app.last_focused_sni_index = app.focused_sni_index;
@@ -70,7 +86,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         frame.render_stateful_widget(scrollbar, sa, &mut state);
     }
 
-    if let Some(items) = app.get_items() {
+    {
+        let items = app.get_items();
         let mut items_vec: Vec<Item> = Vec::new();
         app.sni_states.iter().for_each(|(k, v)| {
             if let Some(pair) = items.get(k) {
@@ -113,12 +130,12 @@ pub fn render(app: &mut App, frame: &mut Frame) {
                         let y_offset = abs_y as i32 - scroll_y as i32;
 
                         if y_offset < 0 {
-                             // Item is partially above the top
-                             r.y = area.y;
-                             r.height = (abs_y + col_rect.height).saturating_sub(scroll_y);
+                            // Item is partially above the top
+                            r.y = area.y;
+                            r.height = (abs_y + col_rect.height).saturating_sub(scroll_y);
                         } else {
-                             // Item is below or at the top
-                             r.y = area.y + y_offset as u16;
+                            // Item is below or at the top
+                            r.y = area.y + y_offset as u16;
                         }
                         result.push(r.intersection(area));
                     }

@@ -24,26 +24,26 @@ pub async fn handle_key_events(key_bind_event: KeyBindEvent, app: &mut App) -> A
         KeyBindEvent::FocusUp => {
             app.move_focus(FocusDirection::Up);
         }
-        _ => {}
-    }
-    let tree_state = app.get_focused_tree_state_mut();
-    if tree_state.is_none() {
-        return Ok(());
-    }
-    let mut tree_state = &mut tree_state.unwrap();
-    match key_bind_event {
         KeyBindEvent::Activate => {
-            let ids = tree_state.selected().to_vec();
-            let _ = app.activate_menu_item(&ids, &mut tree_state).await;
+            let ids = app
+                .get_focused_tree_state()
+                .map(|state| state.selected().to_vec());
+            if let Some(ids) = ids {
+                app.activate_menu_item(&ids).await?;
+            }
         }
         KeyBindEvent::MenuDown => {
-            if !tree_state.key_down() {
-                tree_state.select_first();
+            if let Some(mut tree_state) = app.get_focused_tree_state_mut() {
+                if !tree_state.key_down() {
+                    tree_state.select_first();
+                }
             }
         }
         KeyBindEvent::MenuUp => {
-            if !tree_state.key_up() {
-                tree_state.select_last();
+            if let Some(mut tree_state) = app.get_focused_tree_state_mut() {
+                if !tree_state.key_up() {
+                    tree_state.select_last();
+                }
             }
         }
         _ => {}
@@ -56,12 +56,16 @@ fn get_pos(mouse_event: MouseEvent) -> Position {
     Position::new(mouse_event.column, mouse_event.row)
 }
 
-async fn handle_click(mouse_event: MouseEvent, app: &App) -> Option<()> {
+async fn handle_click(mouse_event: MouseEvent, app: &App) -> AppResult<()> {
     let pos = get_pos(mouse_event);
-    let mut tree_state = &mut app.get_focused_tree_state_mut()?;
-    let ids = tree_state.rendered_at(pos)?.to_vec();
-    app.activate_menu_item(&ids, &mut tree_state).await?;
-    None
+    let ids = app
+        .get_focused_tree_state()
+        .and_then(|state| state.rendered_at(pos).map(|ids| ids.to_vec()));
+    let Some(ids) = ids else {
+        return Ok(());
+    };
+    app.activate_menu_item(&ids).await?;
+    Ok(())
 }
 
 fn handle_scroll(mouse_event: MouseEvent, app: &mut App) -> Option<()> {
@@ -123,7 +127,7 @@ async fn handle_move(mouse_event: MouseEvent, app: &mut App) -> Option<()> {
 pub async fn handle_mouse_event(mouse_event: MouseEvent, app: &mut App) -> AppResult<()> {
     match mouse_event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            let _ = handle_click(mouse_event, app).await;
+            handle_click(mouse_event, app).await?;
         }
         MouseEventKind::Down(MouseButton::Right) => {}
         MouseEventKind::Down(MouseButton::Middle) => {}

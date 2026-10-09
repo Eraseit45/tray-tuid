@@ -7,11 +7,7 @@ use ratatui::{
     style::{Color, Style},
     widgets::Widget,
 };
-use system_tray::client::{Event, UpdateEvent};
-use system_tray::{
-    item::StatusNotifierItem,
-    menu::{MenuItem, TrayMenu},
-};
+use tray_tui::protocol::{MenuItem, TrayItem, TrayMenu};
 
 use tui_tree_widget::{Tree, TreeItem, TreeState};
 
@@ -19,7 +15,7 @@ use crate::config::Config;
 
 pub type Id = usize;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SniState {
     pub rect: Rect,
     pub focused: bool,
@@ -27,14 +23,6 @@ pub struct SniState {
 }
 
 impl SniState {
-    pub fn new() -> Self {
-        Self {
-            rect: Rect::default(),
-            focused: false,
-            tree_state: RefCell::default(),
-        }
-    }
-
     pub fn set_rect(&mut self, rect: Rect) {
         self.rect = rect;
     }
@@ -44,46 +32,22 @@ impl SniState {
     }
 }
 
-pub trait GetTitle {
-    fn get_title(&self) -> &String;
-}
-
-impl GetTitle for StatusNotifierItem {
-    fn get_title(&self) -> &String {
-        if let Some(title) = &self.title {
-            if !title.is_empty() {
-                return &title;
-            }
-        }
-
-        if let Some(tooltip) = &self.tool_tip {
-            return &tooltip.title;
-        }
-
-        &self.id
-    }
-}
-
-/// Wrapper around set of [StatusNotifierItem] and [TrayMenu]
+/// Wrapper around a tray item and its interface state
 #[derive(Debug)]
 pub struct Item<'a> {
     pub sni_state: &'a SniState,
-    pub item: &'a StatusNotifierItem,
+    pub item: &'a TrayItem,
     pub menu: &'a Option<TrayMenu>,
     config: &'a Config,
     pub rect: Rect,
 }
 
 impl<'a> Item<'a> {
-    pub fn new(
-        sni_state: &'a SniState,
-        (item, menu): &'a (StatusNotifierItem, Option<TrayMenu>),
-        config: &'a Config,
-    ) -> Self {
+    pub fn new(sni_state: &'a SniState, item: &'a TrayItem, config: &'a Config) -> Self {
         Self {
             sni_state,
             item,
-            menu,
+            menu: &item.menu,
             config,
             rect: Rect::default(),
         }
@@ -122,7 +86,7 @@ impl<'a> Item<'a> {
 
 impl Widget for Item<'_> {
     fn render(self, area: layout::Rect, buf: &mut Buffer) {
-        let title = self.item.get_title().clone();
+        let title = self.item.title.clone();
         let (bg, fg) = self.get_colors();
         let (bg_h, fg_h) = self.get_highlight_colors();
         let (border_bg, border_fg) = self.get_border_color();
@@ -178,12 +142,11 @@ fn menuitem_to_treeitem(id: usize, menu_item: &MenuItem) -> Option<TreeItem<'_, 
     root.ok()
 }
 
-fn menuitems_to_treeitems(menu_items: &Vec<MenuItem>) -> Vec<TreeItem<'_, Id>> {
+fn menuitems_to_treeitems(menu_items: &[MenuItem]) -> Vec<TreeItem<'_, Id>> {
     menu_items
         .iter()
         .enumerate()
-        .map(|(index, menu_item)| menuitem_to_treeitem(index, menu_item))
-        .filter_map(|x| x)
+        .filter_map(|(index, menu_item)| menuitem_to_treeitem(index, menu_item))
         .collect()
 }
 
@@ -193,7 +156,7 @@ pub trait FindMenuByUsize {
 
 impl FindMenuByUsize for TrayMenu {
     fn find_menu_by_usize(&self, ids: &[Id]) -> Option<&MenuItem> {
-        if ids.len() == 0 {
+        if ids.is_empty() {
             return None;
         }
         let mut result: &MenuItem = self.submenus.get(ids[0])?;
@@ -204,41 +167,5 @@ impl FindMenuByUsize for TrayMenu {
         }
 
         Some(result)
-    }
-}
-
-pub struct LoggableEvent<'a>(pub &'a system_tray::client::Event);
-
-impl std::fmt::Display for LoggableEvent<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.0 {
-            Event::Update(dest, update_event) => {
-                write!(
-                    f,
-                    "{} Update Event for {}",
-                    update_event_variant(&update_event),
-                    dest
-                )
-            }
-            Event::Add(dest, sni) => write!(f, "Add Event for {}: {}", dest, sni.get_title()),
-            Event::Remove(dest) => write!(f, "Remove Event for {}", dest),
-        }
-    }
-}
-
-fn update_event_variant(event: &UpdateEvent) -> &'static str {
-    match event {
-        UpdateEvent::AttentionIcon(_) => "AttentionIcon",
-        UpdateEvent::Icon {
-            icon_name: _,
-            icon_pixmap: _,
-        } => "Icon",
-        UpdateEvent::OverlayIcon(_) => "OverlayIcon",
-        UpdateEvent::Status(_) => "Status",
-        UpdateEvent::Title(_) => "Title",
-        UpdateEvent::Tooltip(_) => "Tooltip",
-        UpdateEvent::Menu(_) => "Menu",
-        UpdateEvent::MenuDiff(_) => "MenuDiff",
-        UpdateEvent::MenuConnect(_) => "MenuConnect",
     }
 }

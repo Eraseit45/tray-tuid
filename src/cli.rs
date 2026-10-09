@@ -5,6 +5,10 @@ use clap_complete::Shell;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about=None)]
 pub struct Cli {
+    /// Unix socket path (default: $XDG_RUNTIME_DIR/tray-tui.sock)
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<std::path::PathBuf>,
+
     /// Path to config file
     #[arg(short, long, value_name = "CONFIG_PATH", value_parser = value_parser!(std::path::PathBuf))]
     pub config_path: Option<std::path::PathBuf>,

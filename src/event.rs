@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crokey::KeyCombination;
-use crossterm::event::{Event as CrosstermEvent, MouseEvent, KeyEventKind};
+use crossterm::event::{Event as CrosstermEvent, KeyEventKind, MouseEvent};
 use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 
@@ -17,7 +17,7 @@ pub enum Event {
     Mouse(MouseEvent),
     /// Terminal resize.
     Resize(u16, u16),
-    /// Loosing focus, doesnt' happen however :(    
+    /// Loosing focus, doesnt' happen however :(
     FocusLost,
 }
 
@@ -91,9 +91,6 @@ impl EventHandler {
         self.receiver
             .recv()
             .await
-            .ok_or(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "This is an IO error",
-            )))
+            .ok_or_else(|| std::io::Error::other("terminal event stream closed").into())
     }
 }
