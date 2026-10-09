@@ -17,6 +17,8 @@ pub enum KeyBindEvent {
     FocusRight,
     MenuUp,
     MenuDown,
+    EnterInsert,
+    EnterNormal,
     Quit,
     Activate,
     None,
@@ -45,46 +47,67 @@ pub struct Config {
     #[serde(default = "mouse")]
     pub mouse: bool,
 
-    #[serde(default = "key_map", deserialize_with = "merge_with_default")]
-    pub key_map: HashMap<KeyCombination, KeyBindEvent>,
+    #[serde(default)]
+    pub key_map: KeyMaps,
 }
 
-fn merge_with_default<'de, D>(
-    deserializer: D,
-) -> Result<HashMap<KeyCombination, KeyBindEvent>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let mut result = key_map();
-    let mut config_map = HashMap::<KeyCombination, KeyBindEvent>::new();
-    let raw_conf_map: Option<HashMap<String, KeyBindEvent>> = Option::deserialize(deserializer)?;
+#[derive(Debug)]
+pub struct KeyMaps {
+    pub normal: HashMap<KeyCombination, KeyBindEvent>,
+    pub insert: HashMap<KeyCombination, KeyBindEvent>,
+}
 
-    // Check for duplicates
-
-    if let Some(map) = raw_conf_map {
-        for (k, v) in map {
-            let kc = if k.len() == 1 && k.chars().next().unwrap().is_uppercase() {
-                let ch = k.chars().next().unwrap();
-                KeyCombination::new(KeyCode::Char(ch), KeyModifiers::SHIFT)
-            } else {
-                KeyCombination::from_str(&k).map_err(serde::de::Error::custom)?
-            };
-            if config_map.contains_key(&kc) {
-                return Err(serde::de::Error::custom(format!(
-                    "config: duplicate key binding detected for key: '{}'",
-                    k
-                )));
-            }
-
-            config_map.insert(kc, v);
+impl Default for KeyMaps {
+    fn default() -> Self {
+        Self {
+            normal: normal_key_map(),
+            insert: insert_key_map(),
         }
     }
+}
 
-    result.extend(config_map);
-
-    log::debug!("LOADED KEYMAP: {:?}", result);
-
-    Ok(result)
+impl<'de> Deserialize<'de> for KeyMaps {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Inspect the outer shape first, so legacy bindings get a migration error.
+        let tables = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+        if tables
+            .keys()
+            .any(|name| name != "normal" && name != "insert")
+        {
+            return Err(serde::de::Error::custom(
+                "the flat [key_map] format is no longer supported; move bindings to [key_map.normal] and [key_map.insert]; see config.toml.example",
+            ));
+        }
+        let mut maps = Self::default();
+        for (name, value) in tables {
+            let overrides = serde_json::from_value::<HashMap<String, KeyBindEvent>>(value)
+                .map_err(serde::de::Error::custom)?;
+            let target = if name == "normal" {
+                &mut maps.normal
+            } else {
+                &mut maps.insert
+            };
+            let mut parsed = HashMap::new();
+            for (key, action) in overrides {
+                let combination =
+                    if key.chars().count() == 1 && key.chars().next().unwrap().is_uppercase() {
+                        KeyCombination::new(
+                            KeyCode::Char(key.chars().next().unwrap()),
+                            KeyModifiers::SHIFT,
+                        )
+                    } else {
+                        KeyCombination::from_str(&key).map_err(serde::de::Error::custom)?
+                    };
+                if parsed.insert(combination, action).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate key binding '{key}' in key_map.{name}",
+                    )));
+                }
+            }
+            target.extend(parsed);
+        }
+        Ok(maps)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -156,7 +179,7 @@ impl Default for Config {
             scrollbar: scrollbar(),
             min_height: min_height(),
             mouse: mouse(),
-            key_map: key_map(),
+            key_map: KeyMaps::default(),
         }
     }
 }
@@ -267,24 +290,25 @@ const fn mouse() -> bool {
     true
 }
 
-fn key_map() -> HashMap<KeyCombination, KeyBindEvent> {
+fn normal_key_map() -> HashMap<KeyCombination, KeyBindEvent> {
     let mut map = HashMap::new();
-    map.insert(key!(left), KeyBindEvent::FocusLeft);
-    map.insert(key!(right), KeyBindEvent::FocusRight);
-    map.insert(key!(down), KeyBindEvent::FocusDown);
-    map.insert(key!(up), KeyBindEvent::FocusUp);
     map.insert(key!(h), KeyBindEvent::FocusLeft);
     map.insert(key!(l), KeyBindEvent::FocusRight);
     map.insert(key!(j), KeyBindEvent::FocusDown);
     map.insert(key!(k), KeyBindEvent::FocusUp);
-    map.insert(key!(shift - up), KeyBindEvent::MenuUp);
-    map.insert(key!(shift - down), KeyBindEvent::MenuDown);
-    map.insert(key!(shift - k), KeyBindEvent::MenuUp);
-    map.insert(key!(shift - j), KeyBindEvent::MenuDown);
+    map.insert(key!(i), KeyBindEvent::EnterInsert);
     map.insert(key!(ctrl - c), KeyBindEvent::Quit);
     map.insert(key!(q), KeyBindEvent::Quit);
-    map.insert(key!(enter), KeyBindEvent::Activate);
-    map.insert(key!(space), KeyBindEvent::Activate);
-
     map
+}
+
+fn insert_key_map() -> HashMap<KeyCombination, KeyBindEvent> {
+    HashMap::from([
+        (key!(j), KeyBindEvent::MenuDown),
+        (key!(k), KeyBindEvent::MenuUp),
+        (key!(enter), KeyBindEvent::Activate),
+        (key!(esc), KeyBindEvent::EnterNormal),
+        (key!(q), KeyBindEvent::Quit),
+        (key!(ctrl - c), KeyBindEvent::Quit),
+    ])
 }

@@ -1,14 +1,21 @@
 use crate::{
-    app::{App, AppResult, FocusDirection},
+    app::{App, AppResult, FocusDirection, Mode},
     config::KeyBindEvent,
 };
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use crokey::KeyCombination;
+use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 
 /// Handles the key events and updates the state of [`App`].
-pub async fn handle_key_events(key_bind_event: KeyBindEvent, app: &mut App) -> AppResult<()> {
+pub async fn handle_key_events(key: KeyEvent, app: &mut App) -> AppResult<()> {
+    let bindings = match app.mode {
+        Mode::Normal => &app.config.key_map.normal,
+        Mode::Insert => &app.config.key_map.insert,
+    };
+    let Some(key_bind_event) = bindings.get(&KeyCombination::from(key)).copied() else {
+        return Ok(());
+    };
     match key_bind_event {
-        // Exit application on `ESC` or `q`
         KeyBindEvent::Quit => {
             app.quit();
         }
@@ -24,6 +31,8 @@ pub async fn handle_key_events(key_bind_event: KeyBindEvent, app: &mut App) -> A
         KeyBindEvent::FocusUp => {
             app.move_focus(FocusDirection::Up);
         }
+        KeyBindEvent::EnterInsert => app.enter_insert(),
+        KeyBindEvent::EnterNormal => app.mode = Mode::Normal,
         KeyBindEvent::Activate => {
             let ids = app
                 .get_focused_tree_state()
@@ -46,9 +55,9 @@ pub async fn handle_key_events(key_bind_event: KeyBindEvent, app: &mut App) -> A
                 }
             }
         }
-        _ => {}
+        KeyBindEvent::None => {}
     }
-
+    app.validate_insert_mode();
     Ok(())
 }
 
@@ -139,5 +148,7 @@ pub async fn handle_mouse_event(mouse_event: MouseEvent, app: &mut App) -> AppRe
         }
         _ => {}
     }
+    app.sync_focus();
+    app.validate_insert_mode();
     Ok(())
 }

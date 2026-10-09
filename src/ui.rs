@@ -7,14 +7,32 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, Mode};
 use crate::wrappers::Item;
 
 /// Renders the user interface widgets.
 pub fn render(app: &mut App, frame: &mut Frame) {
     let rectangles: Vec<Rect>;
 
-    let mut content_area = frame.area();
+    let [mut content_area, status] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    let mode = match app.mode {
+        Mode::Normal => "NORMAL",
+        Mode::Insert => "INSERT",
+    };
+    let title = app
+        .items
+        .get(&app.focused_sni_key)
+        .map(|item| item.title.as_str())
+        .unwrap_or("");
+    frame.render_widget(
+        Paragraph::new(format!("{mode}  {title}")).style(
+            Style::default()
+                .fg(app.config.colors.fg)
+                .bg(app.config.colors.bg),
+        ),
+        status,
+    );
     if let Some(error) = &app.last_error {
         let [content, status] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(content_area);

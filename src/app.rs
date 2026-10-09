@@ -9,13 +9,19 @@ use tui_tree_widget::TreeState;
 
 use tokio::sync::Mutex;
 
-use crate::wrappers::{FindMenuByUsize, Id, SniState};
+use crate::wrappers::{Id, MenuNavigation, SniState};
 use crate::Config;
 
 pub type BoxStack = Vec<(i32, Rect)>;
 
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    Insert,
+}
 
 #[derive(Debug, Default)]
 pub struct Layout {
@@ -28,6 +34,7 @@ pub struct Layout {
 #[derive(Debug)]
 pub struct App {
     pub running: bool,
+    pub mode: Mode,
     /// Config
     pub config: Config,
     /// Connection to the daemon
@@ -50,6 +57,7 @@ impl App {
     pub fn new(client: Client, items: TrayItems, config: Config) -> Self {
         Self {
             running: true,
+            mode: Mode::Normal,
             config,
             items,
             last_error: None,
@@ -94,6 +102,7 @@ impl App {
         if let Some(index) = self.sni_states.get_index_of(&self.focused_sni_key) {
             self.focused_sni_index = index;
         } else if !self.sni_states.is_empty() {
+            self.mode = Mode::Normal;
             // Key is gone! Reset to a valid neighbor (next or previous)
             self.focused_sni_index = self
                 .focused_sni_index
@@ -102,6 +111,7 @@ impl App {
                 self.focused_sni_key = k.clone();
             }
         } else {
+            self.mode = Mode::Normal;
             self.focused_sni_index = 0;
             self.focused_sni_key = String::default();
         }
@@ -111,8 +121,29 @@ impl App {
             .chunks(self.config.columns)
             .map(|chunk| chunk.to_vec())
             .collect();
+        // IDs, rather than positions, keep selections stable across menu reorders.
+        for (key, state) in &self.sni_states {
+            let menu = self.items.get(key).and_then(|item| item.menu.as_ref());
+            let mut tree = state.tree_state.borrow_mut();
+            let stale: Vec<_> = tree
+                .opened()
+                .iter()
+                .filter(|ids| {
+                    menu.and_then(|menu| menu.find_menu_by_id(ids))
+                        .is_none_or(|item| item.submenu.is_empty())
+                })
+                .cloned()
+                .collect();
+            for ids in stale {
+                tree.close(&ids);
+            }
+            if !menu.is_some_and(|menu| menu.is_actionable(tree.selected())) {
+                tree.select(Vec::new());
+            }
+        }
         // Synchronize focus
         self.sync_focus();
+        self.validate_insert_mode();
     }
 
     /// Set running to false to quit the application.
@@ -236,8 +267,48 @@ impl App {
     }
 
     pub fn sync_focus(&mut self) {
-        if let Some(val) = self.sni_states.get_mut(&self.focused_sni_key) {
-            val.set_focused(true);
+        self.focused_sni_key = self.get_focused_sni_key().cloned().unwrap_or_default();
+        for (key, state) in &mut self.sni_states {
+            state.set_focused(key == &self.focused_sni_key);
+        }
+    }
+
+    pub fn enter_insert(&mut self) {
+        let menu = self
+            .items
+            .get(&self.focused_sni_key)
+            .and_then(|item| item.menu.as_ref());
+        if let Some(mut tree) = self.get_focused_tree_state_mut() {
+            if !menu.is_some_and(|menu| menu.is_actionable(tree.selected())) {
+                tree.select(Vec::new());
+            }
+        }
+        self.mode = Mode::Insert;
+        self.validate_insert_mode();
+    }
+
+    pub fn validate_insert_mode(&mut self) {
+        if self.mode != Mode::Insert {
+            return;
+        }
+        let menu = self
+            .items
+            .get(&self.focused_sni_key)
+            .and_then(|item| item.menu.as_ref());
+        let Some((menu, first)) =
+            menu.and_then(|menu| menu.first_actionable().map(|first| (menu, first)))
+        else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        if let Some(mut tree) = self.get_focused_tree_state_mut() {
+            if menu.find_menu_by_id(tree.selected()).is_none() {
+                tree.select(first);
+            }
+            let selected = tree.selected().to_vec();
+            for length in 1..selected.len() {
+                tree.open(selected[..length].to_vec());
+            }
         }
     }
 
@@ -250,9 +321,12 @@ impl App {
         let Some(menu) = self.items.get(sni_key).and_then(|item| item.menu.as_ref()) else {
             return Ok(());
         };
-        let Some(item) = menu.find_menu_by_usize(ids) else {
+        let Some(item) = menu.find_menu_by_id(ids) else {
             return Ok(());
         };
+        if !menu.is_actionable(ids) {
+            return Ok(());
+        }
 
         if item.submenu.is_empty() {
             self.client

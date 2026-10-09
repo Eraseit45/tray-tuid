@@ -13,7 +13,7 @@ use tui_tree_widget::{Tree, TreeItem, TreeState};
 
 use crate::config::Config;
 
-pub type Id = usize;
+pub type Id = i32;
 
 #[derive(Debug, Default)]
 pub struct SniState {
@@ -125,7 +125,11 @@ impl Widget for Item<'_> {
     }
 }
 
-fn menuitem_to_treeitem(id: usize, menu_item: &MenuItem) -> Option<TreeItem<'_, Id>> {
+fn menuitem_to_treeitem(menu_item: &MenuItem) -> Option<TreeItem<'_, Id>> {
+    if !is_rendered(menu_item) {
+        return None;
+    }
+    let id = menu_item.id;
     if menu_item.submenu.is_empty() {
         match &menu_item.label {
             Some(label) => return Some(TreeItem::new_leaf(id, label.clone())),
@@ -143,29 +147,43 @@ fn menuitem_to_treeitem(id: usize, menu_item: &MenuItem) -> Option<TreeItem<'_, 
 }
 
 fn menuitems_to_treeitems(menu_items: &[MenuItem]) -> Vec<TreeItem<'_, Id>> {
-    menu_items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, menu_item)| menuitem_to_treeitem(index, menu_item))
-        .collect()
+    menu_items.iter().filter_map(menuitem_to_treeitem).collect()
 }
 
-pub trait FindMenuByUsize {
-    fn find_menu_by_usize(&self, ids: &[Id]) -> Option<&MenuItem>;
+fn is_rendered(item: &MenuItem) -> bool {
+    item.visible && (item.label.is_some() || !item.submenu.is_empty())
 }
 
-impl FindMenuByUsize for TrayMenu {
-    fn find_menu_by_usize(&self, ids: &[Id]) -> Option<&MenuItem> {
-        if ids.is_empty() {
-            return None;
-        }
-        let mut result: &MenuItem = self.submenus.get(ids[0])?;
-        let mut submenus = &result.submenu;
-        for i in ids.iter().skip(1) {
-            result = submenus.get(*i)?;
-            submenus = &result.submenu;
-        }
+pub trait MenuNavigation {
+    fn find_menu_by_id(&self, ids: &[Id]) -> Option<&MenuItem>;
+    fn first_actionable(&self) -> Option<Vec<Id>>;
+    fn is_actionable(&self, ids: &[Id]) -> bool {
+        !ids.is_empty()
+            && (1..=ids.len()).all(|length| {
+                self.find_menu_by_id(&ids[..length])
+                    .is_some_and(|item| item.enabled)
+            })
+    }
+}
 
-        Some(result)
+impl MenuNavigation for TrayMenu {
+    fn find_menu_by_id(&self, ids: &[Id]) -> Option<&MenuItem> {
+        let mut items = self.submenus.as_slice();
+        let mut result = None;
+        for id in ids {
+            let item = items
+                .iter()
+                .find(|item| item.id == *id && is_rendered(item))?;
+            result = Some(item);
+            items = &item.submenu;
+        }
+        result
+    }
+
+    fn first_actionable(&self) -> Option<Vec<Id>> {
+        self.submenus
+            .iter()
+            .find(|item| is_rendered(item) && item.enabled)
+            .map(|item| vec![item.id])
     }
 }
