@@ -1,8 +1,8 @@
 [package]
-name = "tray-tui"
-description = "System tray in your terminal"
-repository = "https://github.com/Levizor/tray-tui"
-homepage = "https://github.com/Levizor/tray-tui"
+name = "tray-tuid"
+description = "System tray daemon in your terminal"
+repository = "https://github.com/Eraseit45/tray-tuid"
+homepage = "https://github.com/Eraseit45/tray-tuid"
 
 version = "0.3.4"
 authors = [
@@ -11,6 +11,17 @@ authors = [
 ]
 license = "MIT"
 edition = "2021"
+default-run = "tray-tuic"
+autobins = false
+
+[lib]
+name = "tray_tui"
+[[bin]]
+name = "tray-tuic"
+path = "src/main.rs"
+[[bin]]
+name = "tray-tuid"
+path = "src/tray-tuid.rs"
 
 [dependencies]
 clap = { version = "4.5.47", features = ["derive"] }
@@ -24,7 +35,12 @@ indexmap = "2.11.0"
 log = "0.4.28"
 ratatui = { version = "0.29.0", features = ["unstable-widget-ref", "serde"] }
 serde = { version = "1.0.219", features = ["serde_derive", "derive"] }
+serde_json = "1.0.145"
 simplelog = "0.12.2"
 system-tray = { version = "0.8.4" }
 tokio = { version = "1.47.1", features = ["full"] }
 tui-tree-widget = "0.23.1"
+
+[dev-dependencies]
+tempfile = "3"
+zbus = { version = "5", default-features = false, features = ["tokio"] }

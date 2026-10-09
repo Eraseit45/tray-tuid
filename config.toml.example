@@ -1,0 +1,51 @@
+# Configuration for the modal TUI frontend.
+# The frontend starts in normal mode. Each mode merges these bindings with its defaults.
+# Omit bindings to keep their defaults, or set an action to "none" to disable it.
+
+# Sort tray items by their display titles.
+sorting = false
+
+# Maximum number of columns in the tray layout.
+columns = 3
+
+# Minimum height of each tray pane.
+min_height = 4
+
+# Show a scrollbar when needed.
+scrollbar = true
+
+# Preserve mouse movement, clicks, and scrolling in both modes.
+mouse = true
+
+[key_map.normal]
+h = "focus_left"
+j = "focus_down"
+k = "focus_up"
+l = "focus_right"
+i = "enter_insert"
+q = "quit"
+ctrl-c = "quit"
+
+[key_map.insert]
+j = "menu_down"
+k = "menu_up"
+enter = "activate"
+esc = "enter_normal"
+q = "quit"
+ctrl-c = "quit"
+
+[colors]
+bg = "reset"
+bg_focused = "reset"
+fg = "white"
+fg_focused = "white"
+bg_highlighted = "green"
+fg_highlighted = "black"
+border_fg = "white"
+border_fg_focused = "green"
+
+[symbols]
+highlight_symbol = ""
+node_open_symbol = " ▶ "
+node_closed_symbol = " ⏷ "
+node_no_children_symbol = " "

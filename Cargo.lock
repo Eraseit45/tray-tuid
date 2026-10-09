@@ -1695,7 +1695,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tray-tui"
+name = "tray-tuid"
 version = "0.3.4"
 dependencies = [
  "clap",
@@ -1709,10 +1709,13 @@ dependencies = [
  "log",
  "ratatui",
  "serde",
+ "serde_json",
  "simplelog",
  "system-tray",
+ "tempfile",
  "tokio",
  "tui-tree-widget",
+ "zbus",
 ]
 
 [[package]]
